@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-mist: #f7f8fc;
+  --color-periwinkle: #a9b5df;
+  --color-violet: #7886c7;
+  --color-navy: #2d336b;
+
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system,
+    BlinkMacSystemFont, system-ui, "Segoe UI", "Apple SD Gothic Neo",
+    "Noto Sans KR", sans-serif;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-mist);
+  color: var(--color-navy);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
