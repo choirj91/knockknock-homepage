@@ -15,6 +15,8 @@ export interface Product {
   /** Short monogram rendered on the card cover */
   monogram: string;
   stats?: { label: string; value: string }[];
+  /** Related reading hosted on the product site */
+  links?: { label: string; url: string }[];
 }
 
 export const products: Product[] = [
@@ -35,17 +37,19 @@ export const products: Product[] = [
       { label: "등록 앱", value: "950+" },
       { label: "활성 매칭", value: "150+" },
     ],
-  },
-  {
-    slug: "coming-soon",
-    name: "다음 제품",
-    nameEn: "Coming Soon",
-    tagline: "다음 불편함을 찾고 있습니다",
-    description:
-      "일상의 불편함을 편리함으로 바꾸는 다음 제품을 준비하고 있습니다. 곧 찾아뵙겠습니다.",
-    status: "coming-soon",
-    tags: ["준비 중"],
-    cover: "from-periwinkle to-violet",
-    monogram: "??",
+    links: [
+      {
+        label: "서비스 소개",
+        url: "https://tester-match.knockknock.company/about",
+      },
+      {
+        label: "출시 가이드",
+        url: "https://tester-match.knockknock.company/guide",
+      },
+      {
+        label: "운영 지표",
+        url: "https://tester-match.knockknock.company/stats",
+      },
+    ],
   },
 ];

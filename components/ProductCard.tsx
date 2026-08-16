@@ -12,14 +12,34 @@ const statusDot: Record<Product["status"], string> = {
   "coming-soon": "bg-navy/30",
 };
 
+function ArrowIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      <path
+        d="M2 7h10M8 3l4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function ProductCard({ product }: { product: Product }) {
-  const card = (
-    <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-navy/10 bg-white transition duration-300 hover:-translate-y-1 hover:border-violet/50 hover:shadow-xl hover:shadow-navy/10">
+  return (
+    <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-navy/10 bg-white transition duration-300 hover:border-violet/50 hover:shadow-xl hover:shadow-navy/10">
       {/* cover */}
       <div
         className={`relative aspect-[16/9] overflow-hidden bg-gradient-to-br ${product.cover}`}
       >
-        {/* oversized monogram */}
         <span className="absolute -bottom-7 right-3 select-none text-[7rem] font-black leading-none tracking-tighter text-mist/15 transition duration-500 group-hover:text-mist/25">
           {product.monogram}
         </span>
@@ -35,7 +55,20 @@ export default function ProductCard({ product }: { product: Product }) {
       </div>
 
       <div className="flex flex-1 flex-col p-6">
-        <h3 className="text-xl font-bold tracking-tight">{product.name}</h3>
+        <h3 className="text-xl font-bold tracking-tight">
+          {product.url ? (
+            <a
+              href={product.url}
+              target="_blank"
+              rel="noopener"
+              className="transition hover:text-violet"
+            >
+              {product.name}
+            </a>
+          ) : (
+            product.name
+          )}
+        </h3>
         <p className="mt-1 text-sm font-semibold text-violet">
           {product.tagline}
         </p>
@@ -54,6 +87,23 @@ export default function ProductCard({ product }: { product: Product }) {
           </dl>
         )}
 
+        {product.links && (
+          <ul className="mt-5 flex flex-wrap gap-x-4 gap-y-2 border-t border-navy/10 pt-4">
+            {product.links.map((l) => (
+              <li key={l.url}>
+                <a
+                  href={l.url}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-sm text-navy/60 underline decoration-navy/20 underline-offset-4 transition hover:text-violet hover:decoration-violet"
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <div className="mt-5 flex flex-wrap items-center gap-1.5">
           {product.tags.map((tag) => (
             <span
@@ -64,41 +114,18 @@ export default function ProductCard({ product }: { product: Product }) {
             </span>
           ))}
           {product.url && (
-            <span className="ml-auto flex items-center gap-1 text-sm font-semibold text-violet transition group-hover:gap-2 group-hover:text-navy">
+            <a
+              href={product.url}
+              target="_blank"
+              rel="noopener"
+              className="ml-auto flex items-center gap-1 text-sm font-semibold text-violet transition hover:gap-2 hover:text-navy"
+            >
               바로가기
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden
-              >
-                <path
-                  d="M2 7h10M8 3l4 4-4 4"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </span>
+              <ArrowIcon />
+            </a>
           )}
         </div>
       </div>
     </article>
-  );
-
-  return product.url ? (
-    <a
-      href={product.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="block h-full"
-    >
-      {card}
-    </a>
-  ) : (
-    card
   );
 }

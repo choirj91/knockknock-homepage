@@ -129,11 +129,23 @@ export default function Home() {
               title="제품"
               description="낰낰컴퍼니가 만든 제품들입니다. 하나씩 늘려가고 있습니다."
             />
-            <div className="mt-12 grid gap-6 sm:grid-cols-2">
+            <div
+              className={`mt-12 grid gap-6 ${products.length > 1 ? "sm:grid-cols-2" : "max-w-xl"}`}
+            >
               {products.map((product) => (
                 <ProductCard key={product.slug} product={product} />
               ))}
             </div>
+            <p className="mt-8 text-sm leading-relaxed text-navy/50">
+              다음 제품을 준비하고 있습니다. 제휴나 제안이 있다면{" "}
+              <a
+                href="mailto:admin@knockknock.company"
+                className="text-violet underline underline-offset-4"
+              >
+                admin@knockknock.company
+              </a>
+              로 알려주세요.
+            </p>
           </div>
         </section>
 
