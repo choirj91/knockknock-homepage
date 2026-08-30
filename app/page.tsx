@@ -2,6 +2,7 @@ import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import ProductCard from "@/components/ProductCard";
 import { products } from "@/data/products";
+import { getAllPosts, formatDate } from "@/lib/blog";
 
 const values = [
   {
@@ -72,6 +73,8 @@ function KnockRipple({ className = "" }: { className?: string }) {
 }
 
 export default function Home() {
+  const posts = getAllPosts();
+
   return (
     <>
       <Header />
@@ -146,6 +149,50 @@ export default function Home() {
               </a>
               로 알려주세요.
             </p>
+          </div>
+        </section>
+
+        {/* Notes */}
+        <section id="notes" className="scroll-mt-16 border-t border-navy/10">
+          <div className="mx-auto max-w-6xl px-5 py-24">
+            <SectionHeading
+              eyebrow="Notes"
+              title="불편함 노트"
+              description="제품이 되기 전의 기록입니다. 사람들이 참고 지나가는 불편함을 찾아 크기를 재고, 기존 해법이 어디서 멈췄는지 짚습니다."
+            />
+            {posts.length === 0 ? (
+              <p className="mt-10 text-navy/50">첫 글을 준비하고 있습니다.</p>
+            ) : (
+              <ul className="mt-10 divide-y divide-navy/10 border-y border-navy/10">
+                {posts.slice(0, 4).map((p) => (
+                  <li key={p.slug}>
+                    <a href={`/blog/${p.slug}/`} className="group block py-6">
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="rounded-full bg-periwinkle/30 px-2.5 py-1 font-semibold text-navy/80">
+                          {p.category}
+                        </span>
+                        <time dateTime={p.date} className="text-navy/45">
+                          {formatDate(p.date)}
+                        </time>
+                      </div>
+                      <h3 className="mt-2.5 text-lg font-bold leading-snug tracking-tight transition group-hover:text-violet">
+                        {p.title}
+                      </h3>
+                      <p className="mt-1.5 text-sm leading-relaxed text-navy/60">
+                        {p.summary}
+                      </p>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <a
+              href="/blog/"
+              className="mt-8 inline-flex items-center gap-1.5 text-sm font-semibold text-violet transition hover:gap-2.5 hover:text-navy"
+            >
+              노트 전체 보기
+              <span aria-hidden>&rarr;</span>
+            </a>
           </div>
         </section>
 
