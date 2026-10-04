@@ -6,7 +6,8 @@
 
 - Next.js 15 (App Router, `output: "export"` 정적 사이트)
 - Tailwind CSS 4
-- Cloudflare Pages 배포 (wrangler CLI)
+- Azure Static Web Apps (Free) — `main` 에 push 하면 GitHub Actions 가 빌드·배포
+- DNS 는 Cloudflare. 루트 `@` CNAME → SWA 기본 호스트, 프록시 끔(DNS 전용)
 
 ## 개발
 
@@ -17,17 +18,39 @@ pnpm typecheck
 pnpm build      # out/ 에 정적 파일 생성
 ```
 
-## 배포 (Cloudflare Pages)
+## 배포 (Azure Static Web Apps)
 
-최초 1회: Cloudflare 대시보드 또는 `wrangler pages project create knockknock-homepage` 로 프로젝트 생성 후, 커스텀 도메인으로 루트 `knockknock.company` 연결.
+`main` 에 push 하면 끝. `.github/workflows/azure-static-web-apps.yml` 이
+typecheck → build → `out/` 업로드를 한다. 진행 상황은 GitHub Actions 탭.
+
+- 리소스: `swa-knockknock-homepage` (리소스 그룹 `rg-homepage-prod-eas`, East Asia, Free)
+- 인증: 리포 시크릿 `AZURE_STATIC_WEB_APPS_API_TOKEN` (이 앱 하나에만 유효한 배포 토큰)
+- URL 동작: `public/staticwebapp.config.json` — 폴더는 끝에 `/` 붙여 301, 파일은 그대로, 없는 경로는 404
+- 예산: `infra/budget.json` — 그룹 범위 월 $10, 50%·100% 실제 / 100% 예측 시 메일
+
+### Azure CLI 는 `scripts/kh-az` 로만
+
+이 맥의 기본 `az` 로그인은 **회사(직장) 구독**이다. 그대로 쓰면 리소스가 회사 구독에 생긴다.
+`scripts/kh-az` 는 전용 설정 디렉터리 `~/.azure-knockknock-homepage` 를 쓰고, 테넌트·구독·계정이
+`target.env` 와 다르면 멈추며, 변경 명령은 `rg-homepage-prod-eas` 밖으로 못 나가게 막는다.
 
 ```bash
-pnpm pages:deploy
+./scripts/kh-az login          # 사용자가 직접 (admin@knockknock.company)
+./scripts/kh-az staticwebapp list
 ```
+
+- 래퍼 없는 `az login` · `az account set` · `az account show` 금지
+- 테넌트·구독 ID 는 리포에 쓰지 않는다 (`~/.azure-knockknock-homepage/target.env` 에만)
+- 설계 원본: `tester-match/03-output/azure-migration/06-isolation-runbook.md`
+
+### 롤백 (전환 후 약 1주 동안만)
+
+Cloudflare DNS 에서 `@` CNAME 대상을 `knockknock-homepage.pages.dev` 로 되돌리고 프록시를 켠다.
+Cloudflare Pages 프로젝트를 지운 뒤에는 이 경로가 사라진다. 그 전까지만 `pnpm pages:deploy` 가 의미 있다.
 
 ## 제품 추가 방법
 
-`data/products.ts` 의 `products` 배열에 항목 추가만 하면 됨. 커버는 `cover`(Tailwind gradient 클래스) + `emoji` 조합.
+`data/products.ts` 의 `products` 배열에 항목 추가만 하면 됨. 커버는 `cover`(Tailwind gradient 클래스) + `monogram`(커버에 크게 찍히는 영문 약자) 조합. 이모지는 쓰지 않는다.
 
 ## 컬러 시스템
 
@@ -53,8 +76,8 @@ pnpm pages:deploy
 # 1. content/blog/<slug>.md 생성 후 프론트매터 작성
 # 2. 로컬 확인
 pnpm dev
-# 3. 배포
-pnpm pages:deploy
+# 3. 배포 — main 에 push 하면 GitHub Actions 가 알아서 배포
+git add content/blog/<slug>.md && git commit -m "post: <제목>" && git push
 ```
 
 프론트매터 형식 (`title`·`summary`·`date`·`category` 필수, 없으면 빌드 실패):
