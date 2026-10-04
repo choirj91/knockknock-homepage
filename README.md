@@ -66,6 +66,16 @@ typecheck → build → `out/` 업로드를 한다. 진행 상황은 GitHub Acti
 `content/blog/*.md` 파일 하나 = 글 하나. 파일명이 URL slug 가 된다
 (`polypharmacy-medication-list.md` → `/blog/polypharmacy-medication-list/`).
 
+### 매일 초안 루틴
+
+클라우드 루틴 **"불편함 노트 — 매일 초안 PR"** 이 매일 07:00 KST 에 글 한 편을 리서치·작성해서
+`post/<날짜>-<slug>` 브랜치로 PR 을 연다. 검토 후 Merge 하면 배포된다. 기준 미달인 날은 PR 대신
+`[불편함 노트] <날짜> 발행 보류` 이슈가 열린다.
+
+- 관리: https://claude.ai/code/routines/trig_018uHhNFjsYaAgAYmW9Pe2ZF (일시정지·삭제도 여기서)
+- 모델 Opus 5.5, 커넥터 없음(웹 검색·GitHub 만), main 직접 push 금지
+- 지시문을 바꾸면 위 README 의 글 구성 원칙과 어긋나지 않게 같이 고친다
+
 ### 새 글 쓰기
 
 ```bash
