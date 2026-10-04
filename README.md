@@ -43,11 +43,6 @@ typecheck → build → `out/` 업로드를 한다. 진행 상황은 GitHub Acti
 - 테넌트·구독 ID 는 리포에 쓰지 않는다 (`~/.azure-knockknock-homepage/target.env` 에만)
 - 설계 원본: `tester-match/03-output/azure-migration/06-isolation-runbook.md`
 
-### 롤백 (전환 후 약 1주 동안만)
-
-Cloudflare DNS 에서 `@` CNAME 대상을 `knockknock-homepage.pages.dev` 로 되돌리고 프록시를 켠다.
-Cloudflare Pages 프로젝트를 지운 뒤에는 이 경로가 사라진다. 그 전까지만 `pnpm pages:deploy` 가 의미 있다.
-
 ## 제품 추가 방법
 
 `data/products.ts` 의 `products` 배열에 항목 추가만 하면 됨. 커버는 `cover`(Tailwind gradient 클래스) + `monogram`(커버에 크게 찍히는 영문 약자) 조합. 이모지는 쓰지 않는다.
