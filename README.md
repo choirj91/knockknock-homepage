@@ -8,6 +8,7 @@
 - Tailwind CSS 4
 - Azure Static Web Apps (Free) — `main` 에 push 하면 GitHub Actions 가 빌드·배포
 - DNS 는 Cloudflare. 루트 `@` CNAME → SWA 기본 호스트, 프록시 끔(DNS 전용)
+- `www` 도 SWA 에 붙어 있고, 기본 도메인이 `knockknock.company` 라서 www·`*.azurestaticapps.net` 은 루트로 301 (Azure 포털 → 사용자 지정 도메인에서 관리)
 
 ## 개발
 
