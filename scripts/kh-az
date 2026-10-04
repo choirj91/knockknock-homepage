@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# kh-az: Azure CLI pinned to the knockknock-homepage tenant, subscription and resource group.
+# Adapted from tester-match/03-output/azure-migration/06-isolation-runbook.md (tm-az).
+# Never touches ~/.azure. Read verbs run after a context check; every other command
+# must name the subscription and stay inside the dedicated resource group.
+set -euo pipefail
+
+KH_DIR="$HOME/.azure-knockknock-homepage"
+# shellcheck disable=SC1091
+source "$KH_DIR/target.env"
+: "${KH_AZ_TENANT:?missing}" "${KH_AZ_SUBSCRIPTION:?missing}" "${KH_AZ_ACCOUNT:?missing}" "${KH_AZ_RG:?missing}"
+
+export AZURE_CONFIG_DIR="$KH_DIR"   # this process only
+export AZURE_CORE_COLLECT_TELEMETRY=no
+
+stop()  { echo "STOP: $1. Do not work around it; report to the user." >&2; exit "${2:-9}"; }
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+case "${1:-}" in
+  login)   exec az login --tenant "$KH_AZ_TENANT" --allow-no-subscriptions ;;  # user signs in
+  use)     exec az account set --subscription "$KH_AZ_SUBSCRIPTION" ;;          # isolated dir only
+  version) exec az version ;;
+esac
+
+# 1) The signed-in context must match target.env.
+ctx_tenant=$(az account show --query tenantId -o tsv 2>/dev/null || true)
+ctx_sub=$(az account show --query id -o tsv 2>/dev/null || true)
+ctx_user=$(az account show --query user.name -o tsv 2>/dev/null || true)
+[[ "$ctx_tenant" == "$KH_AZ_TENANT" ]] || stop "tenant mismatch" 2
+[[ "$ctx_sub" == "$KH_AZ_SUBSCRIPTION" ]] || stop "subscription mismatch (tenant matches, so 'kh-az use' is allowed)" 2
+[[ "$(lower "$ctx_user")" == "$(lower "$KH_AZ_ACCOUNT")" ]] || stop "account mismatch" 2
+
+# 2) Split --opt=value so every check sees one form; refuse repeated scoping flags.
+ARGS=()
+for a in "$@"; do
+  if [[ "$a" == --*=* ]]; then ARGS+=("${a%%=*}" "${a#*=}"); else ARGS+=("$a"); fi
+done
+value_of() {  # value_of -g --resource-group : value after the first matching flag
+  local flags=" $* " i
+  for ((i = 0; i < ${#ARGS[@]}; i++)); do
+    if [[ "$flags" == *" ${ARGS[i]} "* ]]; then printf '%s' "${ARGS[i+1]:-}"; return; fi
+  done
+}
+for f in "-g --resource-group" "--subscription" "--scope" "-n --name"; do
+  n=0; for a in "${ARGS[@]}"; do [[ " $f " == *" $a "* ]] && n=$((n + 1)); done
+  (( n <= 1 )) || stop "flag '$f' given more than once" 3
+done
+
+# 3) Commands that never go through this wrapper.
+case "${ARGS[0]:-}" in
+  logout|rest|ad|login) stop "'az ${ARGS[0]}' is unscoped and not allowed here" 3 ;;
+esac
+if [[ "${ARGS[0]:-}" == account ]]; then
+  [[ "${ARGS[1]:-}" == show ]] || stop "only 'account show' is allowed; use 'kh-az use'" 3
+  exec az "${ARGS[@]}"
+fi
+for a in "${ARGS[@]}"; do [[ "$a" == --ids ]] && stop "--ids is not allowed; use -g and --name" 3; done
+
+# 4) Read verbs (allowlist) run with the subscription pinned.
+verb=""
+for a in "${ARGS[@]}"; do [[ "$a" == -* ]] && break; verb="$a"; done
+if [[ "$verb" =~ ^(show|list|list-[a-z-]+|get|get-[a-z-]+|exists|check-name)$ ]]; then
+  exec az "${ARGS[@]}" --subscription "$KH_AZ_SUBSCRIPTION"
+fi
+
+# 5) Everything else counts as a change.
+[[ "$(value_of --subscription)" == "$KH_AZ_SUBSCRIPTION" ]] || stop "pass --subscription explicitly" 4
+rg_l=$(lower "$KH_AZ_RG")
+scope=$(value_of --scope)
+if [[ "${ARGS[0]:-}" == group ]]; then
+  [[ "$(lower "$(value_of -n --name -g --resource-group)")" == "$rg_l" ]] || stop "group commands may only target $KH_AZ_RG" 5
+elif [[ -n "$scope" ]]; then
+  [[ "$(lower "$scope")" =~ /resourcegroups/${rg_l}(/|$) ]] || stop "--scope must be inside $KH_AZ_RG" 5
+else
+  [[ "$(lower "$(value_of -g --resource-group)")" == "$rg_l" ]] || stop "resource group must be $KH_AZ_RG" 5
+fi
+
+exec az "${ARGS[@]}"

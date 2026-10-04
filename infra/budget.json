@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Monthly cost budget for rg-homepage-prod-eas. Deploy at resource-group scope through scripts/kh-az."
+  },
+  "parameters": {
+    "startDate": {
+      "type": "string",
+      "metadata": { "description": "First day of the current month, YYYY-MM-DD." }
+    },
+    "contactEmail": {
+      "type": "string"
+    },
+    "amount": {
+      "type": "int",
+      "defaultValue": 10,
+      "metadata": { "description": "Monthly budget in the billing currency." }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Consumption/budgets",
+      "apiVersion": "2023-05-01",
+      "name": "budget-homepage-monthly",
+      "properties": {
+        "category": "Cost",
+        "amount": "[parameters('amount')]",
+        "timeGrain": "Monthly",
+        "timePeriod": { "startDate": "[parameters('startDate')]" },
+        "notifications": {
+          "actual50": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 50,
+            "thresholdType": "Actual",
+            "contactEmails": ["[parameters('contactEmail')]"]
+          },
+          "actual100": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 100,
+            "thresholdType": "Actual",
+            "contactEmails": ["[parameters('contactEmail')]"]
+          },
+          "forecast100": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 100,
+            "thresholdType": "Forecasted",
+            "contactEmails": ["[parameters('contactEmail')]"]
+          }
+        }
+      }
+    }
+  ]
+}
