@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { adsTxtIssue, auditItems, AZURE_NS, cnameIssue, missingHeaders, PINNED_STYLES, redirectsTo, styleIssue, tlsItem } from "./site.mjs";
+import { adsTxtIssue, auditItems, cnameIssue, missingHeaders, PINNED_STYLES, redirectsTo, styleIssue } from "./site.mjs";
 
 const statuses = (items) => items.map((i) => i.status);
 const advisory = (module_name, severity, patched) => ({ module_name, severity, title: `${module_name} ${severity}`, patched_versions: patched });
-const audit = (advisories, vulnerabilities = {}) => ({
-  advisories: Object.fromEntries(advisories.map((a, i) => [i, a])),
-  metadata: { vulnerabilities },
-});
+// `pnpm audit --prod --json` stdout, as check.mjs passes it.
+const audit = (advisories, vulnerabilities = {}) =>
+  JSON.stringify({
+    advisories: Object.fromEntries(advisories.map((a, i) => [i, a])),
+    metadata: { vulnerabilities },
+  });
 
 describe("auditItems", () => {
   it("reports framework advisories on a static export as an upgrade warning with the fixing version (2026-11-07: next 15.1.3)", () => {
@@ -34,7 +36,7 @@ describe("auditItems", () => {
   });
 
   it("falls back to moderate counts, then to ok", () => {
-    assert.deepEqual(statuses(auditItems(audit([], { moderate: 3 }), { staticExport: true })), ["warn"]);
+    assert.deepEqual(statuses(auditItems(audit([advisory("x", "moderate", ">=1.0.1")], { moderate: 1 }), { staticExport: true })), ["warn"]);
     assert.deepEqual(statuses(auditItems(audit([], {}), { staticExport: true })), ["ok"]);
   });
 
@@ -43,31 +45,17 @@ describe("auditItems", () => {
   });
 
   it("reports an audit that did not run as unknown, never as clean", () => {
-    const registryDown = { error: { code: "ECONNREFUSED", summary: "request to http://127.0.0.1:1/ failed" } };
-    for (const broken of [registryDown, {}, null, undefined, { advisories: {} }]) {
+    const registryDown = JSON.stringify({ error: { code: "ECONNREFUSED", summary: "request to http://127.0.0.1:1/ failed" } });
+    for (const broken of [registryDown, "{}", "", undefined, "not json", JSON.stringify({ advisories: {} })]) {
       const items = auditItems(broken, { staticExport: true });
-      assert.deepEqual(statuses(items), ["unknown"], JSON.stringify(broken));
+      assert.deepEqual(statuses(items), ["unknown"], String(broken));
     }
     assert.match(auditItems(registryDown, { staticExport: true })[0].text, /ECONNREFUSED/);
-  });
-});
-
-describe("tlsItem", () => {
-  it("passes a certificate with weeks left and warns, then alarms, as expiry nears", () => {
-    assert.equal(tlsItem({ days: 60 }), null);
-    assert.equal(tlsItem({ days: 20 }).status, "warn");
-    assert.equal(tlsItem({ days: 6 }).status, "danger");
-    assert.equal(tlsItem({ days: -1 }).status, "danger");
+    assert.doesNotMatch(auditItems(registryDown, { staticExport: true })[0].text, /127\.0\.0\.1/);
   });
 
-  it("treats a rejected certificate as danger, a failed connection or missing date as unknown", () => {
-    for (const code of ["CERT_HAS_EXPIRED", "ERR_TLS_CERT_ALTNAME_INVALID", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN"]) {
-      assert.equal(tlsItem({ error: code }).status, "danger", code);
-    }
-    assert.equal(tlsItem({ error: "ECONNRESET" }).status, "unknown");
-    assert.equal(tlsItem({ error: "timeout" }).status, "unknown");
-    assert.equal(tlsItem({ days: Number.NaN }).status, "unknown");
-    assert.equal(tlsItem({}).status, "unknown");
+  it("does not report counts without the advisories behind them as a moderate warning", () => {
+    assert.deepEqual(statuses(auditItems(audit([], { moderate: 3 }), { staticExport: true })), ["unknown"]);
   });
 });
 
@@ -113,12 +101,6 @@ describe("headers, DNS and redirects", () => {
     assert.deepEqual(missingHeaders(production), ["CSP", "X-Frame-Options"]);
     const fixed = new Headers({ "content-security-policy": "frame-ancestors 'none'", "strict-transport-security": "max-age=1", "x-content-type-options": "nosniff" });
     assert.deepEqual(missingHeaders(fixed), []); // frame-ancestors stands in for X-Frame-Options
-  });
-
-  it("recognises Azure DNS name servers by suffix, not by substring (production 2026-11-07)", () => {
-    for (const ns of ["ns1-01.azure-dns.com", "ns2-01.azure-dns.net", "ns3-01.azure-dns.org", "ns4-01.azure-dns.info."]) assert.ok(AZURE_NS.test(ns), ns);
-    assert.equal(AZURE_NS.test("ns1.azure-dns.evil.test"), false);
-    assert.equal(AZURE_NS.test("azure-dns.com.evil.test"), false);
   });
 
   it("checks that a CNAME still points at the expected hosting", () => {

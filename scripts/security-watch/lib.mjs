@@ -141,6 +141,30 @@ export function hostOf(url, base) {
   }
 }
 
+/**
+ * One `scriptTags` entry on a page at `base` → item, or null when it is fine. A src that is not
+ * http(s) has no host for the allow list to judge: `data:` carries the code itself and `blob:`
+ * names code made inside the page. React never renders either. The URL parser lower-cases the
+ * scheme and drops the spaces, tabs and newlines browsers drop (`" DA\tTA:…"` is `data:`). A src
+ * the parser rejects is skipped: the browser cannot load it either.
+ */
+export function scriptSrcItem({ src, quoted }, { base, allowHosts }) {
+  let url;
+  try {
+    url = new URL(src, base);
+  } catch {
+    return null;
+  }
+  const host = url.host.toLowerCase();
+  if (url.protocol === "data:") return { status: "danger", text: "코드를 src 에 직접 담은 스크립트 (data:) — 호스트 허용 목록을 거치지 않음" };
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { status: "danger", text: `http(s) 가 아닌 스크립트 주소 (${url.protocol.slice(0, 20)}) — 이 사이트가 만드는 형태가 아님` };
+  }
+  if (!quoted && /^https?:/i.test(src)) return { status: "danger", text: `React 가 만들지 않은 형태의 외부 스크립트(따옴표 없는 src): ${host}` };
+  if (host && !allowHosts.has(host)) return { status: "danger", text: `허용 목록 밖 외부 스크립트: ${host}` };
+  return null;
+}
+
 /** Signatures of the fake-CAPTCHA (ClickFix) / EtherHiding campaigns seen in October 2026. */
 const MARKERS = [
   {
@@ -268,6 +292,26 @@ export function isAllowedOutbound(target, allow) {
     if (e.startsWith("*.")) return host.endsWith(e.slice(1));
     return host === e;
   });
+}
+
+const KQL_SAFE_PATH = /^[a-z0-9_-]+(\/[a-z0-9_-]+)*$/;
+
+/**
+ * KQL step keeping App Insights `requests` rows that are a POST to one of `paths` (relative to
+ * the site root). App Insights logs the name in the case it was sent (`POST /AUTH/V1/signup`,
+ * 2026-11-07), and Next's rewrite to GoTrue ignores case and decodes the path, so the name is
+ * lower-cased and percent-decoded before the match; `url_decode` returns a malformed escape
+ * unchanged. Whole paths only: `/signup/` is Next's 308, not a second request to GoTrue.
+ * Paths are limited to letters, digits, `_`, `-` and `/` so nothing needs escaping in KQL.
+ */
+export function postPathFilter(paths) {
+  const alts = (paths ?? []).map((p) => {
+    const path = String(p).toLowerCase().replace(/^\/+|\/+$/g, "");
+    if (!KQL_SAFE_PATH.test(path)) throw new Error(`postPathFilter: unsupported path ${JSON.stringify(String(p).slice(0, 40))}`);
+    return path;
+  });
+  if (!alts.length) throw new Error("postPathFilter: no paths");
+  return `where name startswith 'POST ' | extend secwatch_path = tolower(coalesce(url_decode(name), name)) | where secwatch_path matches regex @'^post /(${alts.join("|")})$'`;
 }
 
 const MAX_ITEMS = 6;

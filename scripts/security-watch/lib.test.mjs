@@ -9,7 +9,9 @@ import {
   latestPatch,
   nameServersExpected,
   nextVersionIn,
+  postPathFilter,
   readAudit,
+  scriptSrcItem,
   scriptTags,
   stylesheetHrefs,
   tlsItem,
@@ -68,13 +70,110 @@ describe("scriptTags", () => {
   });
 
   it("stays fast on hostile pages (the regex-free reader must not rescan per tag)", () => {
-    for (const unit of ["<script a", '<script a="', "<script/n=x", "<script/src=x", '<script a="<script b=\''] ) {
+    const allowHosts = new Set(["site.example"]);
+    for (const unit of ["<script a", '<script a="', "<script/n=x", "<script/src=x", '<script a="<script b=\'', "<script src=data:,", '<script src="data:,x"'] ) {
       const page = unit.repeat(Math.ceil(500_000 / unit.length));
       const started = performance.now();
-      scriptTags(page);
+      for (const s of scriptTags(page)) scriptSrcItem(s, { base: "https://site.example", allowHosts });
       const ms = performance.now() - started;
       assert.ok(ms < 1500, `${JSON.stringify(unit)} took ${ms.toFixed(0)} ms`);
     }
+  });
+});
+
+describe("scriptSrcItem", () => {
+  const opts = { base: "https://site.example", allowHosts: new Set(["site.example", "ads.example"]) };
+  const judge = (html) => scriptTags(html).map((s) => scriptSrcItem(s, opts));
+
+  it("passes own and allowed scripts", () => {
+    assert.deepEqual(judge('<script src="/_next/static/chunks/a.js"></script><script src="https://ads.example/t.js"></script>'), [null, null]);
+  });
+
+  it("flags a data: src as danger: the code rides in the attribute, past the host allow list", () => {
+    for (const html of [
+      '<script src="data:text/javascript,alert(1)"></script>',
+      "<script src=data:text/javascript;base64,YWxlcnQoMSk=></script>",
+      '<script src=" DATA:,alert(1)"></script>',
+      '<script src="da&#x74;a:,alert(1)"></script>',
+      '<script src="da&#9;ta:,alert(1)"></script>',
+    ]) {
+      const [item] = judge(html);
+      assert.equal(item?.status, "danger", html);
+      assert.match(item.text, /data:/, html);
+    }
+  });
+
+  it("flags blob: and other non-http(s) schemes as danger, naming the scheme", () => {
+    for (const [html, scheme] of [
+      ['<script src="blob:https://site.example/0b1c2d3e"></script>', "blob:"],
+      ['<script src="javascript:alert(1)"></script>', "javascript:"],
+      ['<script src="file:///etc/passwd"></script>', "file:"],
+    ]) {
+      const [item] = judge(html);
+      assert.equal(item?.status, "danger", html);
+      assert.ok(item.text.includes(scheme), item.text);
+    }
+  });
+
+  it("keeps the unquoted-src and allow-list rules", () => {
+    assert.match(judge("<script src=https://ads.example/t.js></script>")[0].text, /따옴표 없는 src\): ads\.example$/);
+    assert.match(judge('<script src="//evil.example/x.js"></script>')[0].text, /허용 목록 밖 외부 스크립트: evil\.example$/);
+    assert.equal(judge("<script src=/ok.js></script>")[0], null);
+  });
+
+  it("skips a src the URL parser rejects (the browser cannot load it)", () => {
+    assert.equal(judge('<script src="https://[bad"></script>')[0], null);
+  });
+});
+
+describe("postPathFilter", () => {
+  // What KQL's tolower(coalesce(url_decode(name), name)) makes of a logged request name. Checked
+  // against App Insights with a datatable of these names on 2026-11-08: url_decode returns a
+  // malformed escape unchanged, which decodeURIComponent throws on.
+  const asMatched = (name) => {
+    let decoded = name;
+    try {
+      decoded = decodeURIComponent(name);
+    } catch {
+      decoded = name;
+    }
+    return decoded.toLowerCase();
+  };
+  const filter = postPathFilter(["auth/v1/signup", "/auth/v1/otp", "api/auth/signup"]);
+  const regex = new RegExp(filter.match(/matches regex @'([^']*)'/)[1]);
+  const hits = (name) => /^post /i.test(name) && regex.test(asMatched(name));
+
+  it("lower-cases and decodes the name in KQL, POSTs only, before the regex sees it", () => {
+    assert.match(filter, /^where name startswith 'POST ' \| extend (\w+) = tolower\(coalesce\(url_decode\(name\), name\)\) \| where \1 matches regex @'/);
+  });
+
+  it("matches upper-case, mixed-case and percent-encoded spellings of a path", () => {
+    for (const name of [
+      "POST /auth/v1/signup",
+      "POST /AUTH/V1/signup",
+      "POST /AUTH/V1/SIGNUP",
+      "POST /auth/v1/Signup",
+      "POST /Auth/V1/Otp",
+      "POST /auth/v1/%73ignup",
+      "POST /auth/v1/%53IGNUP",
+      "POST /%61uth%2Fv1/otp",
+      "POST /api/auth/signup",
+    ]) {
+      assert.ok(hits(name), name);
+    }
+  });
+
+  it("matches whole paths only", () => {
+    for (const name of ["GET /auth/v1/signup", "POST /auth/v1/signup/", "POST /auth/v1/signups", "POST /x/auth/v1/signup", "POST /auth/v1/token", "POST /auth/v1/signup%zz"]) {
+      assert.equal(hits(name), false, name);
+    }
+  });
+
+  it("refuses paths that would need escaping inside the KQL string, and an empty list", () => {
+    for (const bad of ["auth/v1/sign'up", "auth/v1/sign.up", "auth/v1/(signup|.*)", "auth//v1", ""]) {
+      assert.throws(() => postPathFilter([bad]), /unsupported path/, bad);
+    }
+    assert.throws(() => postPathFilter([]), /no paths/);
   });
 });
 

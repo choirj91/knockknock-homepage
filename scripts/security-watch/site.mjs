@@ -1,7 +1,9 @@
 /**
  * Judging rules specific to this site: a Next.js static export on Azure Static Web Apps with
- * AdSense and one stylesheet from jsDelivr. No network here; check.mjs fetches.
+ * AdSense and one stylesheet from jsDelivr. No network here; check.mjs fetches. Rules that are
+ * not about this site (TLS, name servers, reading the audit report) come from lib.mjs.
  */
+import { readAudit } from "./lib.mjs";
 
 // Only next: its advisories are about the server it ships. react/react-dom run in the visitor's
 // browser on a static site too, so their advisories (XSS) keep their normal weight.
@@ -15,19 +17,17 @@ const floorOf = (advisories) => {
 };
 
 /**
- * `pnpm audit --prod --json` → items. On a static export no Next.js server runs: the framework's
- * high/critical advisories (server actions, image optimizer, middleware) cannot be reached on the
- * live site, so they are an upgrade warning with the version that clears them, not a daily red.
- * A critical advisory anywhere else stays danger.
+ * `pnpm audit --prod --json` output → items. A report that is not there to judge (registry down,
+ * no output, counts without advisories) is unknown, never clean: lib.mjs readAudit. On a static
+ * export no Next.js server runs: the framework's high/critical advisories (server actions, image
+ * optimizer, middleware) cannot be reached on the live site, so they are an upgrade warning with
+ * the version that clears them, not a daily red. A critical advisory anywhere else stays danger.
  */
-export function auditItems(audit, { staticExport }) {
-  // pnpm prints {"error": …} and exits non-zero when the registry is down; that is not "clean".
-  if (!audit || audit.error || typeof audit.advisories !== "object" || typeof audit.metadata !== "object") {
-    const why = audit?.error?.code ?? (audit ? "결과 형식이 다름" : "결과 없음");
-    return [{ status: "unknown", text: `pnpm audit 확인 불가 (${String(why).slice(0, 40)})` }];
-  }
+export function auditItems(raw, { staticExport }) {
+  const { audit, item } = readAudit(raw);
+  if (item) return [item];
   const items = [];
-  const advisories = Object.values(audit.advisories ?? {});
+  const advisories = Object.values(audit.advisories);
   const severe = (a) => a.severity === "critical" || a.severity === "high";
   const framework = advisories.filter((a) => FRAMEWORK.has(a.module_name) && severe(a));
   const critical = advisories.filter((a) => !FRAMEWORK.has(a.module_name) && a.severity === "critical");
@@ -50,7 +50,7 @@ export function auditItems(audit, { staticExport }) {
     items.push({ status: "warn", text: `간접 의존성 high ${otherHigh.length}건 (${modules}) — 정기 업데이트 때 정리` });
   }
   if (!items.length) {
-    const moderate = audit?.metadata?.vulnerabilities?.moderate ?? 0;
+    const moderate = audit.metadata.vulnerabilities.moderate ?? 0;
     items.push(moderate > 0 ? { status: "warn", text: `중간 위험 취약점 ${moderate}건` } : { status: "ok", text: "운영 의존성 알려진 취약점 없음 (pnpm audit)" });
   }
   return items;
@@ -115,21 +115,6 @@ export function cnameIssue(cnames, allowedSuffixes) {
   const odd = cnames.filter((c) => !allowedSuffixes.some((s) => c.toLowerCase().endsWith(s)));
   return odd.length ? `CNAME 이 예상 밖 주소를 가리킴: ${odd.join(", ")}` : null;
 }
-
-// Errors Node raises when the certificate itself is bad, as opposed to the connection failing.
-const CERT_ERROR = /^(CERT_|ERR_TLS_CERT|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|ERR_SSL_)/;
-
-/** TLS probe result ({days} or {error: code}) → item, or null when the certificate is fine. */
-export function tlsItem({ days, error } = {}) {
-  if (error && CERT_ERROR.test(error)) return { status: "danger", text: `TLS 인증서 오류 (${error}) — 방문자 브라우저가 경고를 띄움` };
-  if (error || !Number.isFinite(days)) return { status: "unknown", text: `TLS 인증서 확인 실패${error ? ` (${error})` : ""}` };
-  if (days < 7) return { status: "danger", text: `TLS 인증서 만료 ${days}일 전` };
-  if (days < 21) return { status: "warn", text: `TLS 인증서 만료 ${days}일 전 (Azure 관리 인증서 자동 갱신 확인)` };
-  return null;
-}
-
-/** Azure DNS name servers (ns1-01.azure-dns.com …), and nothing that merely contains the word. */
-export const AZURE_NS = /\.azure-dns\.(com|net|org|info)\.?$/i;
 
 /** Permanent redirect (301/308) to exactly `host`. */
 export function redirectsTo(status, location, host) {

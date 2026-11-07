@@ -12,8 +12,9 @@
  * or an Azure read-only identity this site does not have.
  *
  * lib.mjs, repo-scan.mjs, hardening.mjs and their tests are copied from
- * choirj91/tester-match@363507f 05-harness/security-watch (porting guide: META-PROMPT.md there).
- * Change them there first, then copy. site.mjs holds the rules that are only about this site.
+ * choirj91/tester-match@6c448d1 05-harness/security-watch (porting guide: META-PROMPT.md there).
+ * Change them there first, then copy. site.mjs holds the rules that are only about this site and
+ * uses lib.mjs for the rest.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -21,9 +22,22 @@ import dns from "node:dns/promises";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import tls from "node:tls";
 import { dmarcIssue, dmarcNames, spfIssue } from "./hardening.mjs";
-import { buildSlackPayload, category, compareVersions, findMarkers, hostOf, latestPatch, nextVersionIn, scriptTags, stylesheetHrefs } from "./lib.mjs";
+import {
+  buildSlackPayload,
+  category,
+  compareVersions,
+  findMarkers,
+  hostOf,
+  latestPatch,
+  nameServersExpected,
+  nextVersionIn,
+  scriptSrcItem,
+  scriptTags,
+  stylesheetHrefs,
+  tlsItem,
+} from "./lib.mjs";
 import { addedText, decodeFile, isAllowedHistory, lintWorkflow, PATCH_MARKER, scanText, SKIP_FILE } from "./repo-scan.mjs";
-import { adsTxtIssue, auditItems, AZURE_NS, cnameIssue, missingHeaders, redirectsTo, styleIssue, tlsItem } from "./site.mjs";
+import { adsTxtIssue, auditItems, cnameIssue, missingHeaders, redirectsTo, styleIssue } from "./site.mjs";
 
 const env = process.env;
 const PROJECT = env.SECWATCH_PROJECT_NAME || "낰낰컴퍼니 홈페이지";
@@ -84,13 +98,9 @@ async function checkPages() {
       continue;
     }
     for (const s of scriptTags(res.text)) {
-      const host = hostOf(s.src, SITE);
-      if (!s.quoted && /^https?:/i.test(s.src)) {
-        items.push({ status: "danger", text: `${path} 빌드 뒤 덧붙은 형태의 외부 스크립트(따옴표 없는 src): ${host}` });
-      } else if (host && !allowScript.has(host)) {
-        items.push({ status: "danger", text: `${path} 허용 목록 밖 외부 스크립트: ${host}` });
-      }
-      if (host === SITE_HOST && s.src.includes("/_next/static/")) chunks.add(new URL(s.src, SITE).href);
+      const issue = scriptSrcItem(s, { base: SITE, allowHosts: allowScript });
+      if (issue) items.push({ ...issue, text: `${path} ${issue.text}` });
+      if (hostOf(s.src, SITE) === SITE_HOST && s.src.includes("/_next/static/")) chunks.add(new URL(s.src, SITE).href);
     }
     for (const href of stylesheetHrefs(res.text)) {
       const host = hostOf(href, SITE);
@@ -180,13 +190,7 @@ async function checkDependencies() {
   } catch (err) {
     raw = err.stdout ?? ""; // non-zero exit when advisories exist; missing when pnpm itself is missing
   }
-  let audit = null;
-  try {
-    audit = JSON.parse(raw);
-  } catch {
-    // auditItems reports a result it cannot read as unknown
-  }
-  items.push(...auditItems(audit, { staticExport: true }));
+  items.push(...auditItems(raw, { staticExport: true }));
   return category("deps", "② 프레임워크·의존성 취약점", items);
 }
 
@@ -238,9 +242,8 @@ async function checkSurface() {
   const apex = SITE_HOST.split(".").slice(-2).join(".");
   try {
     const ns = await dns.resolveNs(apex);
-    const expected = env.SECWATCH_EXPECTED_NS; // name-server suffix, for a site not on Azure DNS
-    const isExpected = (n) => (expected ? n.toLowerCase().replace(/\.$/, "").endsWith(expected.toLowerCase()) : AZURE_NS.test(n));
-    if (!ns.length || !ns.every(isExpected)) items.push({ status: "danger", text: `${apex} 네임서버 변경 감지: ${ns.join(", ")}` });
+    // Azure DNS by default; SECWATCH_EXPECTED_NS is a name-server suffix for a zone hosted elsewhere.
+    if (!nameServersExpected(ns, env.SECWATCH_EXPECTED_NS)) items.push({ status: "danger", text: `${apex} 네임서버 변경 감지: ${ns.join(", ")}` });
   } catch (err) {
     items.push({ status: "unknown", text: `네임서버 조회 실패 (${err.code ?? err.message})` });
   }
