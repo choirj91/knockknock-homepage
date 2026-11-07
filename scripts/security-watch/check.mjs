@@ -12,7 +12,7 @@
  * or an Azure read-only identity this site does not have.
  *
  * lib.mjs, repo-scan.mjs, hardening.mjs and their tests are copied from
- * choirj91/tester-match@173e629 05-harness/security-watch (porting guide: META-PROMPT.md there).
+ * choirj91/tester-match@363507f 05-harness/security-watch (porting guide: META-PROMPT.md there).
  * Change them there first, then copy. site.mjs holds the rules that are only about this site.
  */
 import { createHash } from "node:crypto";

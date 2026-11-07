@@ -4,6 +4,8 @@ import {
   appServiceIssues,
   corsRisk,
   dmarcIssue,
+  gotruePathItems,
+  gotrueProbePaths,
   gotrueSettingsItems,
   dmarcNames,
   imageProxyState,
@@ -109,6 +111,50 @@ describe("GoTrue", () => {
     assert.equal(reachesGoTrue(404, "404 page not found"), false);
     assert.equal(reachesGoTrue(400, "<html>bad request</html>"), false);
     assert.equal(reachesGoTrue(0, ""), false);
+  });
+
+  it("spells each closed path the way the case-insensitive rewrite still forwards", () => {
+    assert.deepEqual(gotrueProbePaths(["otp", "/admin/users", ""]), [
+      "/auth/v1/otp",
+      "/AUTH/V1/otp",
+      "/auth/v1/%6ftp",
+      "/auth/v1/admin/users",
+      "/AUTH/V1/admin/users",
+      "/auth/v1/%61dmin/users",
+    ]);
+  });
+
+  describe("closed path probes", () => {
+    const blocked = { status: 404, text: '{"error":"not_found"}' };
+    const gotrue = { status: 400, text: '{"code":400,"error_code":"validation_failed","msg":"Unable to validate email address: invalid format"}' };
+    const probe = (p, r) => gotrueProbePaths([p]).map((path, i) => ({ path, ...r[i] }));
+
+    it("is quiet when every spelling is blocked", () => {
+      assert.deepEqual(gotruePathItems(probe("signup", [blocked, blocked, blocked])), []);
+    });
+
+    it("keeps the plain finding as before and does not repeat it for the variants", () => {
+      const items = gotruePathItems(probe("otp", [gotrue, gotrue, gotrue]));
+      assert.deepEqual(items, [
+        { status: "warn", text: "GoTrue /auth/v1/otp 가 외부에서 열려 있음 — 앱 가입 화면을 거치지 않는 계정 생성·관리 경로 (middleware 차단 목록)" },
+      ]);
+    });
+
+    it("reports a variant that gets past a blocked plain path as a bypass", () => {
+      const items = gotruePathItems(probe("signup", [blocked, gotrue, blocked]));
+      assert.equal(items.length, 1);
+      assert.equal(items[0].status, "warn");
+      assert.match(items[0].text, /\/auth\/v1\/signup 차단을 \/AUTH\/V1\/signup 로 우회/);
+    });
+
+    it("never calls a hidden answer closed", () => {
+      const limited = { status: 429, text: "" };
+      const silent = { status: 0, text: "" };
+      const items = gotruePathItems(probe("magiclink", [limited, blocked, silent]));
+      assert.deepEqual(statuses(items), ["unknown", "unknown"]);
+      assert.match(items[0].text, /\/auth\/v1\/magiclink 차단 여부 확인 불가 \(HTTP 429\)/);
+      assert.match(items[1].text, /%6dagiclink 차단 여부 확인 불가 \(응답 없음\)/);
+    });
   });
 });
 

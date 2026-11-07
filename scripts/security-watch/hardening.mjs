@@ -89,7 +89,7 @@ export function gotrueSettingsItems(settings, expectedProviders) {
 }
 
 /**
- * Answer to an empty POST: GoTrue's own JSON error (validation, missing auth, even a 404 like
+ * Answer to the probe POST: GoTrue's own JSON error (validation, missing auth, even a 404 like
  * user_not_found) means the path reaches GoTrue. The app's middleware block answers
  * 404 {"error":"not_found"} and GoTrue's router answers a plain-text 404 for unknown routes.
  */
@@ -101,6 +101,49 @@ export function reachesGoTrue(status, text) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Each closed path (relative to /auth/v1) as written, with an upper-case prefix, and with its
+ * first letter percent-encoded. Next's rewrite to GoTrue matches case-insensitively and decodes
+ * the path, so a middleware check on the raw, case-sensitive path let `/AUTH/V1/signup` through.
+ */
+export function gotrueProbePaths(paths) {
+  return paths.flatMap((p) => {
+    const rest = String(p).replace(/^\/+/, "");
+    if (!rest) return [];
+    const escaped = `%${rest.charCodeAt(0).toString(16).padStart(2, "0")}${rest.slice(1)}`;
+    return [`/auth/v1/${rest}`, `/AUTH/V1/${rest}`, `/auth/v1/${escaped}`];
+  });
+}
+
+const answerOf = (r) => (r.status ? `HTTP ${r.status}` : "응답 없음");
+
+/**
+ * Probe answers for one closed path, `[{ path, status, text }]` in gotrueProbePaths order (plain
+ * spelling first) → items. Only a 404 that is not GoTrue's own counts as blocked. When the plain
+ * path is open, its spellings say nothing new and are not reported.
+ */
+export function gotruePathItems(results) {
+  const [plain, ...variants] = results;
+  if (!plain) return [];
+  if (reachesGoTrue(plain.status, plain.text)) {
+    return [{ status: "warn", text: `GoTrue ${plain.path} 가 외부에서 열려 있음 — 앱 가입 화면을 거치지 않는 계정 생성·관리 경로 (middleware 차단 목록)` }];
+  }
+  const items = [];
+  if (plain.status !== 404) items.push({ status: "unknown", text: `GoTrue ${plain.path} 차단 여부 확인 불가 (${answerOf(plain)})` });
+  const open = variants.filter((r) => reachesGoTrue(r.status, r.text));
+  if (open.length) {
+    items.push({
+      status: "warn",
+      text: `GoTrue ${plain.path} 차단을 ${open.map((r) => r.path).join(", ")} 로 우회 — Next rewrite 는 대소문자·퍼센트 인코딩을 가리지 않음 (middleware 는 정규화한 경로로 판단해야 함)`,
+    });
+  }
+  const hidden = variants.filter((r) => r.status !== 404 && !reachesGoTrue(r.status, r.text));
+  if (hidden.length) {
+    items.push({ status: "unknown", text: `GoTrue ${hidden.map((r) => r.path).join(", ")} 차단 여부 확인 불가 (${[...new Set(hidden.map(answerOf))].join(", ")})` });
+  }
+  return items;
 }
 
 function tlsBelow12(v) {

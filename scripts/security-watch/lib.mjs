@@ -19,18 +19,106 @@ export function category(key, title, items) {
   return { key, title, status: worst(sorted.map((i) => i.status)), items: sorted };
 }
 
-/** `<script src>` values, and whether the attribute was quoted. React always quotes. */
-export function scriptTags(html) {
-  const out = [];
-  for (const m of (html ?? "").matchAll(/<script\b([^>]*)>/gi)) {
-    const attrs = m[1];
-    const quoted = attrs.match(/\ssrc\s*=\s*(["'])(.*?)\1/i);
-    if (quoted) {
-      out.push({ src: quoted[2], quoted: true });
-      continue;
+const isSpace = (c) => c === 9 || c === 10 || c === 12 || c === 13 || c === 32;
+const [SLASH, EQUALS, GT] = [47, 61, 62];
+
+/**
+ * Reads start-tag attributes the way the HTML tokenizer does: `/` separates attributes like a
+ * space (`<script/src=…>`), a `>` inside a quoted value does not end the tag, the first `src`
+ * wins. `firstSrc(i)` → `{ value, quoted }` of the first src after the tag name ending at `i`,
+ * or null. Every `<script` is read, overlapping ones too, so a decoy inside an inline script
+ * string cannot hide a real tag. Linear in the text: walks that reach the same attribute share
+ * the answer from there, and the ends of names and unquoted values are precomputed (a page of
+ * `<script/n=x` repeated would otherwise rescan to the end once per tag).
+ */
+function srcReader(text) {
+  const n = text.length;
+  const nameEnd = new Int32Array(n + 1).fill(n);
+  const valueEnd = new Int32Array(n + 1).fill(n);
+  for (let i = n - 1; i >= 0; i--) {
+    const c = text.charCodeAt(i);
+    nameEnd[i] = isSpace(c) || c === SLASH || c === GT || c === EQUALS ? i : nameEnd[i + 1];
+    valueEnd[i] = isSpace(c) || c === GT ? i : valueEnd[i + 1];
+  }
+  const skip = (i, slashToo) => {
+    while (i < n && (isSpace(text.charCodeAt(i)) || (slashToo && text.charCodeAt(i) === SLASH))) i++;
+    return i;
+  };
+  const memo = new Map(); // attribute start → first src from there to the end of the tag
+  return function firstSrc(start) {
+    const chain = [];
+    let found = null;
+    for (let i = skip(start, true); i < n && text.charCodeAt(i) !== GT; i = skip(i, true)) {
+      if (memo.has(i)) {
+        found = memo.get(i);
+        break;
+      }
+      chain.push(i);
+      const nameStop = nameEnd[i + 1]; // the first character, even "=", belongs to the name
+      const isSrc = nameStop - i === 3 && text.slice(i, nameStop).toLowerCase() === "src";
+      let j = skip(nameStop, false);
+      if (text.charCodeAt(j) !== EQUALS) {
+        if (isSrc) {
+          found = { value: "", quoted: false };
+          break;
+        }
+        i = j;
+        continue;
+      }
+      j = skip(j + 1, false);
+      const quote = text[j];
+      let value;
+      if (quote === '"' || quote === "'") {
+        const close = text.indexOf(quote, j + 1);
+        const stop = close === -1 ? n : close;
+        value = { from: j + 1, to: stop, quoted: true };
+        i = stop + 1;
+      } else {
+        value = { from: j, to: valueEnd[j], quoted: false };
+        i = value.to;
+      }
+      if (isSrc) {
+        // Unquoted values that end at the same place are one value read from different starts
+        // (`<script/src=x<script/src=x…>` is one tag to the browser): key them by their end.
+        const key = value.quoted ? `q${value.from}` : `u${value.to}`;
+        found = { value: text.slice(value.from, value.to), quoted: value.quoted, key };
+        break;
+      }
     }
-    const bare = attrs.match(/\ssrc\s*=\s*([^\s"'>]+)/i);
-    if (bare) out.push({ src: bare[1], quoted: false });
+    for (const at of chain) memo.set(at, found);
+    return found;
+  };
+}
+
+// Named references that spell URL punctuation; numeric references cover every other character.
+const NAMED_REFS = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", sol: "/", colon: ":", period: ".", quest: "?", num: "#", equals: "=", percnt: "%", commat: "@", bsol: "\\", Tab: "\t", NewLine: "\n" };
+
+/** Character references in an attribute value, decoded as the browser does before it fetches the URL. */
+function decodeRefs(value) {
+  return value.replace(/&(?:#x([0-9a-f]{1,6});?|#(\d{1,7});?|([a-z]{2,8});)/gi, (ref, hex, dec, name) => {
+    if (name) return Object.hasOwn(NAMED_REFS, name) ? NAMED_REFS[name] : ref;
+    const code = hex ? Number.parseInt(hex, 16) : Number(dec);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : "�";
+  });
+}
+
+/**
+ * `<script src>` values (the first `src`, as the browser uses, character references decoded) and
+ * whether the value was quoted. React always quotes. Also reads `<script` inside inline script
+ * strings (document.write loaders); a src that overlapping reads share is listed once, the
+ * earliest reading, which is the one the browser sees.
+ */
+export function scriptTags(html) {
+  const text = String(html ?? "");
+  const out = [];
+  const seen = new Set();
+  let firstSrc = null;
+  for (const m of text.matchAll(/<script(?=[\t\n\f\r />])/gi)) {
+    firstSrc ??= srcReader(text);
+    const src = firstSrc(m.index + m[0].length);
+    if (!src?.value || seen.has(src.key)) continue;
+    seen.add(src.key);
+    out.push({ src: decodeRefs(src.value), quoted: src.quoted });
   }
   return out;
 }
@@ -109,6 +197,66 @@ export function latestPatch(versions, current) {
       return p && p[0] === cur[0] && p[1] === cur[1];
     })
     .reduce((best, v) => (best === null || compareVersions(v, best) > 0 ? v : best), null);
+}
+
+const isRecord = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+
+const vulnerabilityCount = (counts) => Object.values(counts).reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0);
+
+/**
+ * `pnpm audit --json` output → `{ audit }`, or `{ item }` (unknown) when there is no report to
+ * judge. A failed audit prints `{"error": …}` (registry down) or nothing at all (pnpm missing);
+ * neither means "no vulnerabilities". Neither do counts without the advisories behind them.
+ */
+export function readAudit(raw) {
+  let audit = null;
+  try {
+    audit = JSON.parse(raw ?? "");
+  } catch {
+    audit = null;
+  }
+  const unknown = (why) => ({ item: { status: "unknown", text: `pnpm audit 확인 불가 (${why})` } });
+  if (isRecord(audit) && audit.error == null && isRecord(audit.advisories) && isRecord(audit.metadata?.vulnerabilities)) {
+    const listed = Object.keys(audit.advisories).length;
+    if (!listed && vulnerabilityCount(audit.metadata.vulnerabilities) > 0) return unknown("취약점 개수와 목록이 맞지 않음");
+    return { audit };
+  }
+  // Only the error code: pnpm's message quotes the registry URL.
+  const code = isRecord(audit?.error) ? audit.error.code : undefined;
+  return unknown(code ? String(code).replace(/[^\w.-]/g, "?").slice(0, 40) : raw ? "결과 형식이 다름" : "결과 없음");
+}
+
+const CERT_DANGER_DAYS = 7;
+const CERT_WARN_DAYS = 21;
+// Errors Node raises when the certificate itself is bad (expired, wrong name, untrusted chain),
+// as opposed to the connection failing: visitors' browsers show the same warning. Handshake
+// errors (ERR_SSL_*) stay unknown: an App Service restart or a proxy can cause them for a minute.
+const CERT_ERROR = /^(CERT_|ERR_TLS_CERT|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED)/;
+
+/** TLS probe result (`{ days }` until expiry, or `{ error: code }`) → item, or null when the certificate is fine. */
+export function tlsItem({ days, error } = {}) {
+  if (error && CERT_ERROR.test(error)) return { status: "danger", text: `TLS 인증서 오류 (${error}) — 방문자 브라우저도 같은 경고를 띄움` };
+  if (error || !Number.isFinite(days)) return { status: "unknown", text: `TLS 인증서 확인 실패${error ? ` (${error})` : ""}` };
+  if (days < CERT_DANGER_DAYS) return { status: "danger", text: `TLS 인증서 만료 ${days}일 전` };
+  if (days < CERT_WARN_DAYS) return { status: "warn", text: `TLS 인증서 만료 ${days}일 전` };
+  return null;
+}
+
+/** Azure DNS name servers (ns1-01.azure-dns.com …), and nothing that merely contains the word. */
+export const AZURE_NS = /\.azure-dns\.(com|net|org|info)\.?$/i;
+
+/**
+ * True when there is an answer and every name server is Azure DNS, or sits under `suffix` for a
+ * site on another DNS host. The suffix matches whole labels: "ns.cloudflare.com" is not
+ * "evilns.cloudflare.com". One unexpected server in the set is enough to take over the zone.
+ */
+export function nameServersExpected(ns, suffix) {
+  const want = String(suffix ?? "").toLowerCase().replace(/^\.+|\.+$/g, "");
+  const ok = (n) => {
+    const host = String(n).toLowerCase().replace(/\.+$/, "");
+    return want ? host === want || host.endsWith(`.${want}`) : AZURE_NS.test(host);
+  };
+  return Array.isArray(ns) && ns.length > 0 && ns.every(ok);
 }
 
 /** App Insights dependency target (host or host:port) against allow entries: exact, "*.suffix", bare IP any port. */
