@@ -1,0 +1,68 @@
+name: Security Watch
+
+# 매일 아침 보안 점검 → Tester Match 와 같은 Slack 채널로 카테고리별 결과 전송 (헤더에 사이트 이름).
+# 점검 내용과 판정 규칙: scripts/security-watch/check.mjs
+# 공용 모듈(lib·repo-scan·hardening)은 choirj91/tester-match 05-harness/security-watch 에서 복사한 것.
+#
+# 예약은 06:47 KST. 정시(:00)는 GitHub 예약이 몰려 몇 시간씩 늦게 돈다 (공식 문서도 정시를 피하라고 함).
+# Tester Match(06:53)와 몇 분 떨어뜨려 두 보고가 채널에서 따로 보이게 했다.
+#
+# 정적 사이트라 Azure 로그인·DB 접속이 없다. 쓰는 시크릿은 Slack 웹훅 하나뿐이다.
+# 위험(danger) 이 하나라도 있으면 Slack 전송 후 이 실행도 실패로 표시된다.
+
+on:
+  schedule:
+    - cron: "47 21 * * *" # 06:47 KST
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/security-watch/**"
+      - ".github/workflows/security-watch.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-watch-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # PR: 판정 규칙 단위 테스트만. 운영 사이트 점검·Slack 전송은 하지 않는다.
+  test:
+    name: 판정 규칙 테스트
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/security-watch/*.test.mjs
+
+  watch:
+    name: 보안 점검
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # ⑦ scans the whole commit history of every branch
+
+      # Version comes from "packageManager" in package.json. pnpm audit reads the lockfile only.
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Unit tests for the judging rules
+        run: node --test scripts/security-watch/*.test.mjs
+
+      - name: Run checks and post to Slack
+        env:
+          SECWATCH_SLACK_WEBHOOK_URL: ${{ secrets.SECWATCH_SLACK_WEBHOOK_URL }}
+        run: node scripts/security-watch/check.mjs
