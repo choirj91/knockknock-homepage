@@ -1,5 +1,9 @@
 {
   "trailingSlash": "auto",
+  "globalHeaders": {
+    "Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'; base-uri 'self'",
+    "X-Frame-Options": "DENY"
+  },
   "responseOverrides": {
     "404": {
       "rewrite": "/404.html",
